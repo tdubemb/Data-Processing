@@ -1,0 +1,123 @@
+WITH SAFETY AS 
+    (
+    SELECT 
+        CONCAT_WS('-',CAST(RIGHT(JDENO,4) AS INT),MARKET) AS LOC   
+        ,I.U_MRIN AS MRIN
+        ,U_DC
+        ,CASE
+           WHEN U_PRODUCTTYPE = 'MB-Dry' THEN 'DRY'
+            WHEN U_PRODUCTTYPE = 'MB-Refrigerated' THEN 'RFG'
+            WHEN U_PRODUCTTYPE = 'MB-Frozen' THEN 'FRZ'
+            ELSE U_PRODUCTTYPE END AS ZONE
+        ,SPLIT_PART(I.ITEM,'_',-1) AS WRIN
+        ,S.LOC AS LOC_OG
+        ,U_DEL_SCH_TYP AS I_TYPE
+        ,AVG(SAFETY_STOCK) AS SQ
+        ,AVG(SSCOV_CT) AS CARTONS
+        ,MAX(VOL) AS VOL
+
+
+    FROM 
+        MB_ANZ_DW_PRD.CERTIFIED_ANZ_ROP.VWP_SAFETY_STOCK S 
+    LEFT JOIN MB_ANZ_DW_PRD.CERTIFIED_ANZ_ROP.VW_DIM_LOC L
+        ON L.LOC = S.LOC
+    LEFT JOIN  MB_ANZ_DW_DEV.CERTIFIED_ANZ_ROP.VW_DIM_ITEM I 
+         ON I.ITEM = S.ITEM
+WHERE TRY_CAST(CREAT_DAT AS DATE)  between (select dateadd(WEEK,-3, getdate())) and (select dateadd(day,+9, getdate()))
+
+    GROUP BY 
+        S.LOC
+        ,JDENO
+        ,MARKET
+        ,I.U_MRIN
+        ,I.ITEM
+        ,U_DC
+        ,U_DEL_SCH_TYP 
+        ,U_PRODUCTTYPE
+
+
+    ),
+
+ITEM AS 
+    (
+    SELECT  
+        ITEM.DC
+        ,ITEM.WRIN
+        ,ITEM.DESCRIPTION
+        ,ITEM.MWRIN
+        ,ITEM.MWRIN1
+        ,ITEM.MWRIN_DESC
+        ,ITEM.ITEM_LENGTH
+        ,ITEM.ITEM_WIDTH
+        ,ITEM.ITEM_HEIGHT
+        ,ITEM.CASE_CUBE
+        ,ITEM.WEIGHT
+        ,ITEM.ITEM_TYPE
+        ,CASE 
+            WHEN TEMPCODEGROUP ='BUN' THEN 'FRZ'
+            ELSE TEMPCODEGROUP END AS TEMPCODEGROUP 
+
+    FROM 
+    MB_ANZ_DW_PRD.CERTIFIED_ANZ.DIM_ITEM ITEM 
+    LEFT JOIN 
+        (
+        SELECT
+            DISTINCT(I_WRINDC) AS I_WRINDC
+            ,DC 
+            ,MAX(GREGORIAN) AS LATEST_DATE 
+
+        FROM 
+            MB_ANZ_DW_PRD.CERTIFIED_ANZ.FACTSALES
+
+        GROUP BY 
+            I_WRINDC
+            ,DC 
+
+        )
+        SALES 
+        ON SALES.I_WRINDC = ITEM.WRIN_DC
+    
+    WHERE MWRIN_DESC IS NOT NULL 
+    AND ITEM.WRIN  NOT LIKE '%VMI%' AND ITEM.WRIN NOT LIKE '%CON%'
+ --  AND STATUS = 'O'
+  --  AND PRIMARYYN = 'Y'
+
+   -- AND MWRIN1 = 'AU_90000011'
+
+ QUALIFY ROW_NUMBER() OVER ( PARTITION BY WRIN ORDER BY ITEM.DC)  = 1
+
+    ORDER BY 
+        ITEM.MWRIN 
+
+    )
+SELECT 
+    CONCAT_WS('-',LOC,S.ZONE) AS ZONE_KEY
+    ,MRIN
+    ,I.WRIN
+    ,I.DESCRIPTION AS WRIN_DESCRIPTION
+    ,MWRIN_DESC
+    ,ZONE AS TEMPCODEGROUP 
+    ,SQ
+    ,CASE_CUBE
+    ,CARTONS
+    ,SUM(SQ * CASE_CUBE) AS SAFETY_CUBE
+
+FROM SAFETY S 
+    LEFT JOIN ITEM I ON I.MWRIN1 = S.MRIN AND I.WRIN = S.WRIN
+
+
+WHERE TEMPCODEGROUP IS NOT NULL
+  --  AND LOC_OG = 'AU_R395'
+
+
+
+GROUP BY 
+   CONCAT_WS('-',LOC,S.ZONE)
+    ,MRIN
+    ,I.WRIN
+    ,I.DESCRIPTION 
+    ,MWRIN_DESC
+    ,ZONE 
+    ,SQ
+    ,CASE_CUBE
+    ,CARTONS
